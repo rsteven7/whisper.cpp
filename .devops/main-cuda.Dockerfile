@@ -1,6 +1,6 @@
 ARG UBUNTU_VERSION=22.04
 # This needs to generally match the container host's environment.
-ARG CUDA_VERSION=13.0.0
+ARG CUDA_VERSION=12.6.11-1
 # Target the CUDA build image
 ARG BASE_CUDA_DEV_CONTAINER=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
 # Target the CUDA runtime image
@@ -20,7 +20,7 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # Ref: https://stackoverflow.com/a/53464012
-ENV CUDA_MAIN_VERSION=13.0
+ENV CUDA_MAIN_VERSION=12.6.11-1
 ENV LD_LIBRARY_PATH /usr/local/cuda-${CUDA_MAIN_VERSION}/compat:$LD_LIBRARY_PATH
 
 COPY .. .
@@ -34,7 +34,7 @@ RUN find /app/build -name "*.o" -delete && \
     rm -rf /app/build/_deps
 
 FROM ${BASE_CUDA_RUN_CONTAINER} AS runtime
-ENV CUDA_MAIN_VERSION=13.0
+ENV CUDA_MAIN_VERSION=12.6.11-1
 ENV LD_LIBRARY_PATH /usr/local/cuda-${CUDA_MAIN_VERSION}/compat:$LD_LIBRARY_PATH
 WORKDIR /app
 
