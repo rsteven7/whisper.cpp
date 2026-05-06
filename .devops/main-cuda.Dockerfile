@@ -1,31 +1,46 @@
-ARG UBUNTU_VERSION=22.04
-# This needs to generally match the container host's environment.
+ARG JETPACK_VERSION=36.4
 ARG CUDA_VERSION=12.6.11-1
-# Target the CUDA build image
-ARG BASE_CUDA_DEV_CONTAINER=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
-# Target the CUDA runtime image
-ARG BASE_CUDA_RUN_CONTAINER=nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+ARG L4T_CUDA_TAG=12.6.11-runtime
+ARG BASE_CUDA_DEV_CONTAINER=nvcr.io/nvidia/l4t-cuda:${L4T_CUDA_TAG}
+ARG BASE_CUDA_RUN_CONTAINER=nvcr.io/nvidia/l4t-cuda:${L4T_CUDA_TAG}
 
 FROM ${BASE_CUDA_DEV_CONTAINER} AS build
+ARG JETPACK_VERSION
+ARG CUDA_VERSION
 WORKDIR /app
 
-# Unless otherwise specified, we make a fat build.
-ARG CUDA_DOCKER_ARCH=all
-# Set nvcc architecture
+# Orin Nano is Ampere with compute capability 8.7.
+ARG CUDA_DOCKER_ARCH=87
+ARG CMAKE_CUDA_ARCHITECTURES=${CUDA_DOCKER_ARCH}
 ENV CUDA_DOCKER_ARCH=${CUDA_DOCKER_ARCH}
+ENV PATH=/usr/local/cuda/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
+LABEL org.opencontainers.image.description="whisper.cpp CUDA build for NVIDIA Jetson Orin Nano" \
+      org.opencontainers.image.vendor="ggml-org" \
+      com.nvidia.jetpack.version="${JETPACK_VERSION}" \
+      com.nvidia.cuda.version="${CUDA_VERSION}"
 
 RUN apt-get update && \
-    apt-get install -y build-essential libsdl2-dev wget cmake git \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      cmake \
+      cuda-libraries-dev-12-6=${CUDA_VERSION} \
+      cuda-minimal-build-12-6=${CUDA_VERSION} \
+      git \
+      libsdl2-dev \
+      wget \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-# Ref: https://stackoverflow.com/a/53464012
-ENV CUDA_MAIN_VERSION=12.6.11-1
-ENV LD_LIBRARY_PATH /usr/local/cuda-${CUDA_MAIN_VERSION}/compat:$LD_LIBRARY_PATH
-
-COPY .. .
-# Enable cuBLAS
-RUN make base.en CMAKE_ARGS="-DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES='75;80;86;90'"
+COPY . .
+RUN cmake -B build \
+      -DGGML_CUDA=1 \
+      -DGGML_CUDA_NCCL=OFF \
+      -DWHISPER_BUILD_TESTS=OFF \
+      -DCMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES}" && \
+    cmake --build build --config Release --target whisper-cli whisper-server whisper-bench
 
 RUN find /app/build -name "*.o" -delete && \
     find /app/build -name "*.a" -delete && \
@@ -34,17 +49,23 @@ RUN find /app/build -name "*.o" -delete && \
     rm -rf /app/build/_deps
 
 FROM ${BASE_CUDA_RUN_CONTAINER} AS runtime
-ENV CUDA_MAIN_VERSION=12.6.11-1
-ENV LD_LIBRARY_PATH /usr/local/cuda-${CUDA_MAIN_VERSION}/compat:$LD_LIBRARY_PATH
+ARG JETPACK_VERSION
+ARG CUDA_VERSION
 WORKDIR /app
+ENV PATH=/app/build/bin:/usr/local/cuda/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
+LABEL org.opencontainers.image.description="whisper.cpp CUDA runtime for NVIDIA Jetson Orin Nano" \
+      org.opencontainers.image.vendor="ggml-org" \
+      com.nvidia.jetpack.version="${JETPACK_VERSION}" \
+      com.nvidia.cuda.version="${CUDA_VERSION}"
 
 RUN apt-get update && \
-  apt-get install -y curl ffmpeg wget cmake git \
+  apt-get install -y --no-install-recommends ca-certificates curl ffmpeg wget \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 COPY --from=build /app /app
-RUN du -sh /app/*
-RUN find /app -type f -size +100M
-ENV PATH=/app/build/bin:$PATH
+EXPOSE 8080
 ENTRYPOINT [ "bash", "-c" ]
+CMD [ "whisper-server --host 0.0.0.0 --port 8080 -m /models/ggml-base.en.bin" ]

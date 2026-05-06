@@ -1,0 +1,42 @@
+services:
+  whisper-server:
+    image: whisper.cpp:jetson-orin-nano-cuda
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: .devops/main-cuda.Dockerfile
+      args:
+        JETPACK_VERSION: "36.4"
+        CUDA_VERSION: "12.6.11-1"
+        L4T_CUDA_TAG: "12.6.11-runtime"
+        CUDA_DOCKER_ARCH: "87"
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      WHISPER_HOST: ${WHISPER_HOST:-0.0.0.0}
+      WHISPER_PORT: ${WHISPER_PORT:-8080}
+      WHISPER_MODEL_NAME: ${WHISPER_MODEL_NAME:-base.en}
+      WHISPER_MODEL: ${WHISPER_MODEL:-/models/ggml-base.en.bin}
+      WHISPER_SERVER_ARGS: ${WHISPER_SERVER_ARGS:-}
+    ports:
+      - "${WHISPER_PUBLISHED_PORT:-8080}:${WHISPER_PORT:-8080}"
+    volumes:
+      - ./models:/models
+    command:
+      - |
+        if [ ! -f "${WHISPER_MODEL:-/models/ggml-base.en.bin}" ]; then
+          ./models/download-ggml-model.sh "${WHISPER_MODEL_NAME:-base.en}" /models;
+        fi
+        set -- ${WHISPER_SERVER_ARGS:-}
+        exec whisper-server \
+          --host "${WHISPER_HOST:-0.0.0.0}" \
+          --port "${WHISPER_PORT:-8080}" \
+          -m "${WHISPER_MODEL:-/models/ggml-base.en.bin}" \
+          "$@"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${WHISPER_PORT:-8080}/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
